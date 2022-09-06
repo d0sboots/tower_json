@@ -1,0 +1,11 @@
+# Might be present due to unpacking/building
+/*.jar
+/zlib*.tgz
+/zlib*.tar.gz
+/zlib*.tar.bz
+/zlib/*
+# Keep so that the directory remains
+!/zlib/README.md
+# Compiled artifacts
+/compiled.js
+/compiled.wasm
