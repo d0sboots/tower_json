@@ -9,3 +9,4 @@
 # Compiled artifacts
 /compiled.js
 /compiled.wasm
+/minified.js

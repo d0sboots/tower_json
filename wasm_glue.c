@@ -26,12 +26,17 @@ void *malloc(size_t size) {
   return (void*)old_brk;
 }
 
-void free(void *ptr) {}
+inline void free(void *ptr) {}
 
 extern size_t __heap_base;
 void heap_reset() {
   heap_current = (uintptr_t)&__heap_base;
 }
+
+void* zalloc(void *unused, unsigned int count, unsigned int size) {
+  return malloc(count * size);
+}
+void zfree(void *unused1, void *unused2) {}
 
 struct result {
   int32_t size;
@@ -40,18 +45,24 @@ struct result {
 
 uintptr_t make_error(const char* str, size_t size) {
   struct result* res = malloc(sizeof(struct result) + size);
-  res->size = size;
+  res->size = -size;
   memcpy(res->data, str, size);
+  // After an error, the heap will be reset.
+  // The error value we return will still be "valid" until we call into WASM
+  // again.
+  heap_reset();
   return (uintptr_t)res;
 }
 #define MAKE_ERROR(str) make_error((str), sizeof(str))
 
-#define SET_ERROR(result_p, str) do {(result_p)->size = sizeof(str); memcpy((result_p)->data, (str), sizeof(str));} while(0)
+#define SET_ERROR(result_p, str) do {(result_p)->size = -sizeof(str); memcpy((result_p)->data, (str), sizeof(str));} while(0)
 
 uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
   z_stream stream;
 
-  int err = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 9, Z_DEFAULT_STRATEGY);
+  stream.zalloc = zalloc;
+  stream.zfree = zfree;
+  int err = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY);
   if (err != Z_OK) return MAKE_ERROR("Can't deflateInit2");
 
   stream.next_in = (z_const Bytef*)buf_in;
@@ -74,5 +85,12 @@ uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
     default:
       SET_ERROR(res, "Unknown in deflate()!"); break;
   }
+  // Reset the heap, which avoids needing any cleanup.
+  // Our return value remains "valid" until we call into WASM again.
+  heap_reset();
   return (uintptr_t)res;
+}
+
+uintptr_t do_inflate(uintptr_t buf_in, size_t size) {
+  return 0;
 }

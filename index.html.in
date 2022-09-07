@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tower Format Converter</title>
+<style>
+html, body {
+  height: 100%;
+  padding: 0;
+  margin: 0;
+}
+label {
+  display: block;
+}
+textarea {
+  height: 90%;
+}
+.box-container {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 8px;
+}
+.box-wrapper {
+  display: inline-block;
+}
+.box-wrapper + .box-wrapper {
+  flex-grow: 1;
+}
+.box {
+  resize: none;
+  width: 100%;
+}
+@media screen and (min-width:800px) {
+  .box-container {
+    flex-direction: row;
+  }
+  .box-wrapper {
+    flex-grow: 1;
+    min-height: 13em;
+  }
+}
+</style>
+</head>
+<body>
+  <div class="box-container">
+    <div class="box-wrapper">
+      <label for="base64">Base64 encoded:</label>
+      <textarea id="base64"
+                class="box"
+                rows=12
+                autocomplete="off"
+                autocorrect="off"
+                spellcheck="false"></textarea>
+    </div>
+    <div class="box-wrapper">
+      <label for="json">JSON:</label>
+      <textarea id="json"
+                class="box"
+                rows=12
+                spellcheck="false"></textarea>
+    </div>
+  </div>
+  <script>"""REPLACE_JS_HERE"""</script>
+</body>
+</html>
