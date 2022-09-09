@@ -23,10 +23,11 @@ WebAssembly.instantiate(wasm, {}).then(out => {
 
 function result2array(result_ptr) {
   const size = HEAP32[result_ptr/4];
+  const view = new U8Array(buffer, HEAP32[result_ptr/4 + 1], size < 0 ? -size : size);
   if (size < 0) {
-    throw new Error(fromCharCode(...new U8Array(buffer, result_ptr + 4, -size)));
+    throw new Error(fromCharCode(...view));
   }
-  return new U8Array(buffer, result_ptr + 4, size);
+  return view;
 }
 
 function decode() {

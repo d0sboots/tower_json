@@ -40,22 +40,14 @@ void zfree(void *unused1, void *unused2) {}
 
 struct result {
   int32_t size;
-  Bytef data[0];
+  Bytef* data;
 };
 
-uintptr_t make_error(const char* str, size_t size) {
-  struct result* res = malloc(sizeof(struct result) + size);
-  res->size = -size;
-  memcpy(res->data, str, size);
-  // After an error, the heap will be reset.
-  // The error value we return will still be "valid" until we call into WASM
-  // again.
-  heap_reset();
-  return (uintptr_t)res;
-}
-#define MAKE_ERROR(str) make_error((str), sizeof(str))
-
-#define SET_ERROR(result_p, str) do {(result_p)->size = -sizeof(str); memcpy((result_p)->data, (str), sizeof(str));} while(0)
+#define RETURN_ERROR(str) do {\
+  static const struct result _res = {1 - sizeof(str), (Bytef*)(str)};\
+  heap_reset();\
+  return (uintptr_t)&_res;\
+} while(0)
 
 uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
   z_stream stream;
@@ -63,27 +55,28 @@ uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
   stream.zalloc = zalloc;
   stream.zfree = zfree;
   int err = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY);
-  if (err != Z_OK) return MAKE_ERROR("Can't deflateInit2");
+  if (err != Z_OK) RETURN_ERROR("Can't deflateInit2");
 
   stream.next_in = (z_const Bytef*)buf_in;
   stream.avail_in = size;
   stream.avail_out = deflateBound(&stream, size);
 
   struct result* res = malloc(sizeof(struct result) + stream.avail_out);
+  res->data = ((Bytef*)res) + sizeof(*res);
   stream.next_out = res->data;
 
   err = deflate(&stream, Z_FINISH);
-  switch(err) {
-    case Z_STREAM_END:
-      res->size = stream.next_out - res->data; break;
-    case Z_OK:
-      SET_ERROR(res, "Didn't finish compressing"); break;
-    case Z_STREAM_ERROR:
-      SET_ERROR(res, "Z_STREAM_ERROR in deflate()"); break;
-    case Z_BUF_ERROR:
-      SET_ERROR(res, "Z_BUF_ERROR in deflate()"); break;
-    default:
-      SET_ERROR(res, "Unknown in deflate()!"); break;
+  if (stream.msg != NULL) {
+    res->size = -strlen(stream.msg);
+    res->data = (Bytef*)stream.msg;
+  } else {
+    if (err == Z_OK) {
+      RETURN_ERROR("Z_OK: Buffer size issue in deflate()");
+    }
+    if (err != Z_STREAM_END) {
+      RETURN_ERROR("Unknown error in deflate()!");
+    }
+    res->size = stream.next_out - res->data;
   }
   // Reset the heap, which avoids needing any cleanup.
   // Our return value remains "valid" until we call into WASM again.
@@ -92,5 +85,44 @@ uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
 }
 
 uintptr_t do_inflate(uintptr_t buf_in, size_t size) {
-  return 0;
+  z_stream stream;
+
+  stream.zalloc = zalloc;
+  stream.zfree = zfree;
+  int err = inflateInit2(&stream, -15);
+  if (err != Z_OK) RETURN_ERROR("Can't deflateInit2");
+
+  stream.next_in = (z_const Bytef*)buf_in;
+  stream.avail_in = size;
+  // Provide a generous amount of room for inflate; in practice all payloads
+  // ought to be less than 500% compression ratio.
+  stream.avail_out = size * 5 + 1024;
+
+  struct result* res = malloc(sizeof(struct result) + stream.avail_out);
+  res->data = ((Bytef*)res) + sizeof(*res);
+  stream.next_out = res->data;
+
+  err = inflate(&stream, Z_FINISH);
+  if (stream.msg != NULL) {
+    res->size = -strlen(stream.msg);
+    res->data = (Bytef*)stream.msg;
+  } else {
+    if (err == Z_OK) {
+      RETURN_ERROR("Z_OK: Buffer size issue in inflate()");
+    }
+    if (err == Z_BUF_ERROR) {
+      RETURN_ERROR("Bad data in inflate()!");
+    }
+    if (err != Z_STREAM_END) {
+      RETURN_ERROR("Unknown error in inflate()!");
+    }
+    if (stream.avail_in != 0) {
+      RETURN_ERROR("Extra bytes after end-of-stream!");
+    }
+    res->size = stream.next_out - res->data;
+  }
+  // Reset the heap, which avoids needing any cleanup.
+  // Our return value remains "valid" until we call into WASM again.
+  heap_reset();
+  return (uintptr_t)res;
 }
