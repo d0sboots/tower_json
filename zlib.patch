@@ -1,0 +1,131 @@
+--- zlib/deflate_patched.c	2022-03-27 16:39:42.000000000 -0700
++++ zlib/deflate_patched.c	2022-09-05 23:08:40.809087087 -0700
+@@ -133,10 +133,10 @@
+ #else
+ local const config configuration_table[10] = {
+ /*      good lazy nice chain */
+-/* 0 */ {0,    0,  0,    0, deflate_stored},  /* store only */
+-/* 1 */ {4,    4,  8,    4, deflate_fast}, /* max speed, no lazy matches */
+-/* 2 */ {4,    5, 16,    8, deflate_fast},
+-/* 3 */ {4,    6, 32,   32, deflate_fast},
++/* 0 */ {4,    4, 16,   16, deflate_slow}, /* eliminate unused deflate_stored/deflate_fast */
++/* 1 */ {4,    4, 16,   16, deflate_slow},
++/* 2 */ {4,    4, 16,   16, deflate_slow},
++/* 3 */ {4,    4, 16,   16, deflate_slow},
+ 
+ /* 4 */ {4,    4, 16,   16, deflate_slow},  /* lazy matches */
+ /* 5 */ {8,   16, 32,   32, deflate_slow},
+@@ -432,7 +432,7 @@
+         return Z_STREAM_ERROR;
+ 
+     /* when using zlib wrappers, compute Adler-32 for provided dictionary */
+-    if (wrap == 1)
++    if (0)
+         strm->adler = adler32(strm->adler, dictionary, dictLength);
+     s->wrap = 0;                    /* avoid computing Adler-32 in read_buf */
+ 
+@@ -532,8 +532,10 @@
+     strm->adler =
+ #ifdef GZIP
+         s->wrap == 2 ? crc32(0L, Z_NULL, 0) :
+-#endif
+         adler32(0L, Z_NULL, 0);
++#else
++        0;
++#endif
+     s->last_flush = -2;
+ 
+     _tr_init(s);
+@@ -878,7 +880,7 @@
+             putShortMSB(s, (uInt)(strm->adler >> 16));
+             putShortMSB(s, (uInt)(strm->adler & 0xffff));
+         }
+-        strm->adler = adler32(0L, Z_NULL, 0);
++        strm->adler = 0;
+         s->status = BUSY_STATE;
+ 
+         /* Compression must start with an empty pending buffer */
+@@ -1040,10 +1042,7 @@
+         (flush != Z_NO_FLUSH && s->status != FINISH_STATE)) {
+         block_state bstate;
+ 
+-        bstate = s->level == 0 ? deflate_stored(s, flush) :
+-                 s->strategy == Z_HUFFMAN_ONLY ? deflate_huff(s, flush) :
+-                 s->strategy == Z_RLE ? deflate_rle(s, flush) :
+-                 (*(configuration_table[s->level].func))(s, flush);
++        bstate = (*(configuration_table[s->level].func))(s, flush);
+ 
+         if (bstate == finish_started || bstate == finish_done) {
+             s->status = FINISH_STATE;
+@@ -1214,7 +1213,7 @@
+     strm->avail_in  -= len;
+ 
+     zmemcpy(buf, strm->next_in, len);
+-    if (strm->state->wrap == 1) {
++    if (0) {
+         strm->adler = adler32(strm->adler, buf, len);
+     }
+ #ifdef GZIP
+--- zlib/inflate_patched.c	2022-03-27 16:39:42.000000000 -0700
++++ zlib/inflate_patched.c	2022-09-07 15:35:11.687717326 -0700
+@@ -451,7 +451,7 @@
+ #  define UPDATE_CHECK(check, buf, len) \
+     (state->flags ? crc32(check, buf, len) : adler32(check, buf, len))
+ #else
+-#  define UPDATE_CHECK(check, buf, len) adler32(check, buf, len)
++#  define UPDATE_CHECK(check, buf, len) 0
+ #endif
+ 
+ /* check macros for header crc */
+@@ -699,7 +699,7 @@
+             state->dmax = 1U << len;
+             state->flags = 0;               /* indicate zlib header */
+             Tracev((stderr, "inflate:   zlib header ok\n"));
+-            strm->adler = state->check = adler32(0L, Z_NULL, 0);
++            strm->adler = state->check = 0;
+             state->mode = hold & 0x200 ? DICTID : TYPE;
+             INITBITS();
+             break;
+@@ -853,7 +853,7 @@
+                 RESTORE();
+                 return Z_NEED_DICT;
+             }
+-            strm->adler = state->check = adler32(0L, Z_NULL, 0);
++            strm->adler = state->check = 0;
+             state->mode = TYPE;
+                 /* fallthrough */
+         case TYPE:
+@@ -1352,8 +1352,7 @@
+ 
+     /* check for correct dictionary identifier */
+     if (state->mode == DICT) {
+-        dictid = adler32(0L, Z_NULL, 0);
+-        dictid = adler32(dictid, dictionary, dictLength);
++        dictid = 0;
+         if (dictid != state->check)
+             return Z_DATA_ERROR;
+     }
+--- zlib-1.2.12/Makefile.in	2022-03-27 16:39:42.000000000 -0700
++++ zlib/Makefile.in	2022-09-09 17:35:20.620041842 -0700
+@@ -162,8 +162,8 @@
+ crc32.o: $(SRCDIR)crc32.c
+ 	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)crc32.c
+ 
+-deflate.o: $(SRCDIR)deflate.c
+-	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)deflate.c
++deflate.o: $(SRCDIR)deflate_patched.c
++	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)deflate_patched.c
+ 
+ infback.o: $(SRCDIR)infback.c
+ 	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)infback.c
+@@ -171,8 +171,8 @@
+ inffast.o: $(SRCDIR)inffast.c
+ 	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)inffast.c
+ 
+-inflate.o: $(SRCDIR)inflate.c
+-	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)inflate.c
++inflate.o: $(SRCDIR)inflate_patched.c
++	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)inflate_patched.c
+ 
+ inftrees.o: $(SRCDIR)inftrees.c
+ 	$(CC) $(CFLAGS) $(ZINC) -c -o $@ $(SRCDIR)inftrees.c

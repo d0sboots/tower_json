@@ -19,15 +19,22 @@ CFLAGS=-Os -Wall -sSTRICT -sSUPPORT_LONGJMP=0 -flto -DNO_GZIP
 LDFLAGS=-sENVIRONMENT=web -sINCOMING_MODULE_JS_API=[] -sFILESYSTEM=0 -sEXPORTED_FUNCTIONS=[_malloc,_do_deflate,_do_inflate] -sDYNAMIC_EXECUTION=0 -sMINIMAL_RUNTIME=2 -sTOTAL_STACK=524288 -sMALLOC=none -sINITIAL_MEMORY=2097152 -sMODULARIZE=0
 CLOSURE_ARGS=--language_in=ECMASCRIPT_2020 --compilation_level=ADVANCED_OPTIMIZATIONS
 
-.PHONY: all configure clean
+.PHONY: all configure clean patch
 all: index.html
+
+patch: zlib/deflate_patched.c
+
+zlib/deflate_patched.c zlib/inflate_patched.c &:
+	cp zlib/deflate.c zlib/deflate_patched.c
+	cp zlib/inflate.c zlib/inflate_patched.c
+	patch -p0 -i zlib.patch
 
 configure: zlib/zlib.pc
 
 zlib/libz.a: zlib/zlib.pc
 	cd zlib/ && $(EMMAKE) $(MAKE) libz.a
 
-zlib/zlib.pc:
+zlib/zlib.pc: zlib/deflate_patched.c
 	cd zlib/ && CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" $(EMCONFIGURE) ./configure --static --solo
 
 compiled.wasm: wasm_glue.c zlib/libz.a
@@ -41,4 +48,5 @@ index.html: index.html.in minified.js compiled.wasm merge_templates.py
 
 clean:
 	cd zlib/ && $(MAKE) distclean
-	rm -rf compiled.js compiled.wasm minified.js index.html
+	patch -p0 -R -i zlib.patch
+	rm -rf compiled.js compiled.wasm minified.js index.html zlib/deflate_patched.c zlib/inflate_patched.c
