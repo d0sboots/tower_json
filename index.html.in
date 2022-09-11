@@ -14,55 +14,44 @@ label {
   display: block;
 }
 textarea {
-  height: 90%;
+  resize: none;
+}
+#error-box {
+  color: red;
 }
 .box-container {
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+  display: grid;
+  grid-template-rows: 1em minmax(5em, 1fr) 1em minmax(10em, 3fr);
+  grid-auto-flow: column;
+  height: 100vh;
   padding: 8px;
-  gap: 8px;
-}
-.box-wrapper {
-  display: inline-block;
-}
-.box-wrapper + .box-wrapper {
-  flex-grow: 1;
-}
-.box {
-  resize: none;
-  width: 100%;
+  column-gap: 8px;
 }
 @media screen and (min-width:800px) {
   .box-container {
-    flex-direction: row;
-  }
-  .box-wrapper {
-    flex-grow: 1;
-    min-height: 13em;
+    grid-template-rows: 1em 1fr;
   }
 }
 </style>
 </head>
 <body>
+Paste tower blueprint strings into the base64 box to get decoded JSON
+strings, or modify the JSON to get base64 codes to import.
+  <div id="error-box"></div>
   <div class="box-container">
-    <div class="box-wrapper">
-      <label for="base64">Base64 encoded:</label>
-      <textarea id="base64"
-                class="box"
-                rows=12
-                autocomplete="off"
-                autocorrect="off"
-                spellcheck="false"></textarea>
-    </div>
-    <div class="box-wrapper">
-      <label for="json">JSON:</label>
-      <textarea id="json"
-                class="box"
-                rows=12
-                spellcheck="false"></textarea>
-    </div>
+    <label for="base64">Base64 encoded:</label>
+    <textarea id="base64"
+              class="box"
+              rows=12
+              autocomplete="off"
+              autocorrect="off"
+              spellcheck="false"></textarea>
+    <label for="json">JSON:</label>
+    <textarea id="json"
+              class="box"
+              rows=12
+              spellcheck="false"></textarea>
   </div>
   <script>"""REPLACE_JS_HERE"""</script>
 </body>
