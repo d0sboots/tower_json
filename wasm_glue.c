@@ -95,8 +95,8 @@ uintptr_t do_inflate(uintptr_t buf_in, size_t size) {
   stream.next_in = (z_const Bytef*)buf_in;
   stream.avail_in = size;
   // Provide a generous amount of room for inflate; in practice all payloads
-  // ought to be less than 500% compression ratio.
-  stream.avail_out = size * 5 + 1024;
+  // ought to be less than 2000% compression ratio.
+  stream.avail_out = size * 20 + 1024;
 
   struct result* res = malloc(sizeof(struct result) + stream.avail_out);
   res->data = ((Bytef*)res) + sizeof(*res);
