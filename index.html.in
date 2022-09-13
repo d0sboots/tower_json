@@ -10,14 +10,11 @@ html, body {
   padding: 0;
   margin: 0;
 }
-label {
-  display: block;
-}
 textarea {
   resize: none;
 }
-#error-box {
-  color: red;
+#pretty {
+  margin: 0 0 0 3em;
 }
 .box-container {
   box-sizing: border-box;
@@ -38,16 +35,19 @@ textarea {
 <body>
 Paste tower blueprint strings into the base64 box to get decoded JSON
 strings, or modify the JSON to get base64 codes to import.
-  <div id="error-box"></div>
   <div class="box-container">
-    <label for="base64">Base64 encoded:</label>
+    <span><label for="base64">Base64 encoded:</label></span>
     <textarea id="base64"
               class="box"
               rows=12
               autocomplete="off"
               autocorrect="off"
               spellcheck="false"></textarea>
-    <label for="json">JSON:</label>
+    <span>
+      <label for="json">JSON:</label>
+      <input type="checkbox" id="pretty" checked>
+      <label for="pretty">Pretty-print JSON</label>
+    </span>
     <textarea id="json"
               class="box"
               rows=12
