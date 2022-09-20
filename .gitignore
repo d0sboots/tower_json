@@ -10,3 +10,4 @@
 /compiled.js
 /compiled.wasm
 /minified.js
+/*.o

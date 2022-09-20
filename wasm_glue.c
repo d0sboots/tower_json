@@ -2,6 +2,7 @@
 #include <emscripten/heap.h>
 
 #include "zlib.h"
+#include "wasm_glue.h"
 
 /* Use arena-allocation through sbrk() directly for a truly tiny malloc()
  * solution. Of course, this leaks all memory unless/until it is freed with
@@ -17,10 +18,10 @@ void *malloc(size_t size) {
   uintptr_t old_brk = heap_current;
   uintptr_t new_brk = old_brk + increment;
   if (increment > 0 && (uint32_t)new_brk <= (uint32_t)old_brk) {
-    return NULL;
+    return (void *)-1;
   }
   if (new_brk > emscripten_get_heap_size()) {
-    return NULL;
+    return (void *)-1;
   }
   heap_current = new_brk;
   return (void*)old_brk;
@@ -38,18 +39,24 @@ void* zalloc(void *unused, unsigned int count, unsigned int size) {
 }
 void zfree(void *unused1, void *unused2) {}
 
-struct result {
-  int32_t size;
-  Bytef* data;
-};
-
 #define RETURN_ERROR(str) do {\
   static const struct result _res = {1 - sizeof(str), (Bytef*)(str)};\
   heap_reset();\
   return (uintptr_t)&_res;\
 } while(0)
 
-uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
+uintptr_t do_deflate(uintptr_t buf_in, size_t size, int reformat) {
+  struct result* format_out;
+  unsigned char* b_in = (unsigned char*)buf_in;
+  if (reformat) {
+    format_out = format_json(b_in, size, 0);
+    if (format_out->size < 0) {
+      return (uintptr_t)format_out;
+    }
+    b_in = format_out->data;
+    size = format_out->size;
+  }
+
   z_stream stream;
 
   stream.zalloc = zalloc;
@@ -57,7 +64,7 @@ uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
   int err = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY);
   if (err != Z_OK) RETURN_ERROR("Can't deflateInit2");
 
-  stream.next_in = (z_const Bytef*)buf_in;
+  stream.next_in = b_in;
   stream.avail_in = size;
   stream.avail_out = deflateBound(&stream, size);
 
@@ -84,7 +91,7 @@ uintptr_t do_deflate(uintptr_t buf_in, size_t size) {
   return (uintptr_t)res;
 }
 
-uintptr_t do_inflate(uintptr_t buf_in, size_t size) {
+uintptr_t do_inflate(uintptr_t buf_in, size_t size, int reformat) {
   z_stream stream;
 
   stream.zalloc = zalloc;
@@ -121,6 +128,12 @@ uintptr_t do_inflate(uintptr_t buf_in, size_t size) {
     }
     res->size = stream.next_out - res->data;
   }
+  if (reformat) {
+    struct result* format_out;
+    format_out = format_json(res->data, res->size, 1);
+    res = format_out;
+  }
+
   // Reset the heap, which avoids needing any cleanup.
   // Our return value remains "valid" until we call into WASM again.
   heap_reset();

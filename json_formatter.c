@@ -27,7 +27,16 @@ SOFTWARE.
 */
 
 #include <stdlib.h>
-#include "JSON_checker.h"
+#include <string.h>
+
+#include "wasm_glue.h"
+
+typedef struct JSON_checker_struct {
+  int state;
+  int* limit;
+  int* top;
+  int* stack;
+} * JSON_checker;
 
 #define TRUE  1
 #define FALSE 0
@@ -74,10 +83,11 @@ enum classes {
     NR_CLASSES
 };
 
-static int ascii_class[128] = {
+static signed char ascii_class[256] = {
 /*
-    This array maps the 128 ASCII characters into character classes.
-    The remaining Unicode characters should be mapped to C_ETC.
+    This array maps the 256 ASCII characters into character classes.
+    Unicode is explicitly not handled (returns error), since we don't
+    need it for our application.
     Non-whitespace control characters are errors.
 */
     __,      __,      __,      __,      __,      __,      __,      __,
@@ -98,7 +108,27 @@ static int ascii_class[128] = {
     C_ETC,   C_LOW_A, C_LOW_B, C_LOW_C, C_LOW_D, C_LOW_E, C_LOW_F, C_ETC,
     C_ETC,   C_ETC,   C_ETC,   C_ETC,   C_LOW_L, C_ETC,   C_LOW_N, C_ETC,
     C_ETC,   C_ETC,   C_LOW_R, C_LOW_S, C_LOW_T, C_LOW_U, C_ETC,   C_ETC,
-    C_ETC,   C_ETC,   C_ETC,   C_LCURB, C_ETC,   C_RCURB, C_ETC,   C_ETC
+    C_ETC,   C_ETC,   C_ETC,   C_LCURB, C_ETC,   C_RCURB, C_ETC,   C_ETC,
+
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
+    __,      __,      __,      __,      __,      __,      __,      __,
 };
 
 
@@ -141,7 +171,7 @@ enum states {
 };
 
 
-static int state_transition_table[NR_STATES][NR_CLASSES] = {
+static signed char state_transition_table[NR_STATES][NR_CLASSES] = {
 /*
     The state transition table takes the current state and the current symbol,
     and returns either a new state or an action. An action is represented as a
@@ -194,26 +224,24 @@ enum modes {
     MODE_OBJECT
 };
 
-static void
-destroy(JSON_checker jc)
-{
-/*
-    Delete the JSON_checker object.
-*/
-    jc->valid = 0;
-    free((void*)jc->stack);
-    free((void*)jc);
-}
+
+struct reject_result {
+    int pos;
+    unsigned char bad_char;
+    unsigned char state;
+    unsigned char mode;
+};
 
 
-static int
-reject(JSON_checker jc)
+void reject(const JSON_checker jc, const unsigned char* buf, int pos, struct result* out)
 {
-/*
-    Delete the JSON_checker object.
-*/
-    destroy(jc);
-    return FALSE;
+    // Special flag indicates structured error
+    out->size = -1;
+    struct reject_result* result = (struct reject_result*)out->data;
+    result->pos = pos;
+    result->bad_char = buf[pos];
+    result->state = jc->state;
+    result->mode = *jc->top;
 }
 
 
@@ -224,10 +252,10 @@ push(JSON_checker jc, int mode)
     Push a mode onto the stack. Return false if there is overflow.
 */
     jc->top += 1;
-    if (jc->top >= jc->depth) {
+    if (jc->top >= jc->limit) {
         return FALSE;
     }
-    jc->stack[jc->top] = mode;
+    *jc->top = mode;
     return TRUE;
 }
 
@@ -239,7 +267,7 @@ pop(JSON_checker jc, int mode)
     Pop the stack, assuring that the current mode matches the expectation.
     Return false if there is underflow or if the modes mismatch.
 */
-    if (jc->top < 0 || jc->stack[jc->top] != mode) {
+    if (*jc->top != mode) {
         return FALSE;
     }
     jc->top -= 1;
@@ -247,8 +275,7 @@ pop(JSON_checker jc, int mode)
 }
 
 
-JSON_checker
-new_JSON_checker(int depth)
+static void new_JSON_checker(JSON_checker jc, int depth)
 {
 /*
     new_JSON_checker starts the checking process by constructing a JSON_checker
@@ -262,144 +289,188 @@ new_JSON_checker(int depth)
     The JSON_checker object will be deleted by JSON_checker_done.
     JSON_checker_char will delete the JSON_checker object if it sees an error.
 */
-    JSON_checker jc = (JSON_checker)malloc(sizeof(struct JSON_checker_struct));
-    jc->valid = GOOD;
     jc->state = GO;
-    jc->depth = depth;
-    jc->top = -1;
-    jc->stack = (int*)calloc(depth, sizeof(int));
-    push(jc, MODE_DONE);
-    return jc;
+    jc->stack = (int*)malloc(depth * sizeof(int));
+    jc->top = jc->stack;
+    jc->limit = jc->top + depth;
+    *jc->top = MODE_DONE;
 }
 
 
-int
-JSON_checker_char(JSON_checker jc, int next_char)
+static unsigned char* indent(JSON_checker jc, unsigned char* curr) {
+    *curr = '\n';
+    curr++;
+    for (int* st = jc->stack; st != jc->top; ++st) {
+        memcpy(curr, "  ", 2);
+        curr += 2;
+    }
+    return curr;
+}
+
+
+struct result* format_json(const unsigned char* buf, int size, int pretty)
 {
-/*
-    After calling new_JSON_checker, call this function for each character (or
-    partial character) in your JSON text. It can accept UTF-8, UTF-16, or
-    UTF-32. It returns TRUE if things are looking ok so far. If it rejects the
-    text, it deletes the JSON_checker object and returns false.
-*/
-    int next_class, next_state;
-/*
-    Determine the character's class.
-*/
-    if (jc->valid != GOOD) {
-        return FALSE;
-    }
-    if (next_char < 0) {
-        return reject(jc);
-    }
-    if (next_char >= 128) {
-        next_class = C_ETC;
-    } else {
-        next_class = ascii_class[next_char];
+    const int MAX_DEPTH = 10;
+    // Worst-case: 2-space indent * DEPTH every 2 characters (number + comma)
+    struct result* out = malloc(sizeof(struct result) + MAX_DEPTH * size);
+    out->data = ((unsigned char*)out) + sizeof(*out);
+    unsigned char* curr = out->data;
+
+    struct JSON_checker_struct jc;
+    new_JSON_checker(&jc, MAX_DEPTH);
+
+    int pos = 0;
+    for (; pos < size; ++pos) {
+        /* Determine the character's class. */
+        unsigned char next = buf[pos];
+        signed char next_class = ascii_class[next];
         if (next_class <= __) {
-            return reject(jc);
+            goto REJECT;
         }
-    }
-/*
-    Get the next state from the state transition table.
-*/
-    next_state = state_transition_table[jc->state][next_class];
-    if (next_state >= 0) {
-/*
-    Change the state.
-*/
-        jc->state = next_state;
-/*
-    Or perform one of the actions.
-*/
-    } else {
-        switch (next_state) {
-/* empty } */
-        case -9:
-            if (!pop(jc, MODE_KEY)) {
-                return reject(jc);
+        /* Get the next state from the state transition table. */
+        int next_state = state_transition_table[jc.state][next_class];
+        if (next_state >= 0) {
+            /* Change the state.  */
+            jc.state = next_state;
+            if (next_class > C_WHITE) {
+                *curr = next;
+                curr++;
             }
-            jc->state = OK;
-            break;
-
-/* } */ case -8:
-            if (!pop(jc, MODE_OBJECT)) {
-                return reject(jc);
-            }
-            jc->state = OK;
-            break;
-
-/* ] */ case -7:
-            if (!pop(jc, MODE_ARRAY)) {
-                return reject(jc);
-            }
-            jc->state = OK;
-            break;
-
-/* { */ case -6:
-            if (!push(jc, MODE_KEY)) {
-                return reject(jc);
-            }
-            jc->state = OB;
-            break;
-
-/* [ */ case -5:
-            if (!push(jc, MODE_ARRAY)) {
-                return reject(jc);
-            }
-            jc->state = AR;
-            break;
-
-/* " */ case -4:
-            switch (jc->stack[jc->top]) {
-            case MODE_KEY:
-                jc->state = CO;
-                break;
-            case MODE_ARRAY:
-            case MODE_OBJECT:
-                jc->state = OK;
-                break;
-            default:
-                return reject(jc);
-            }
-            break;
-
-/* , */ case -3:
-            switch (jc->stack[jc->top]) {
-            case MODE_OBJECT:
-/*
-    A comma causes a flip from object mode to key mode.
-*/
-                if (!pop(jc, MODE_OBJECT) || !push(jc, MODE_KEY)) {
-                    return reject(jc);
+            /* Or perform one of the actions.  */
+        } else {
+            switch (next_state) {
+            /* empty } */
+            case -9:
+                // Rewind previous indent
+                if (pretty) {
+                    curr -= 1 + 2 * (jc.top - jc.stack);
                 }
-                jc->state = KE;
+                if (!pop(&jc, MODE_KEY)) {
+                    goto REJECT;
+                }
+                jc.state = OK;
+                *curr = next;
+                curr++;
                 break;
-            case MODE_ARRAY:
-                jc->state = VA;
+
+    /* } */ case -8:
+                if (!pop(&jc, MODE_OBJECT)) {
+                    goto REJECT;
+                }
+                jc.state = OK;
+                if (pretty) {
+                    curr = indent(&jc, curr);
+                }
+                *curr = next;
+                curr++;
+                break;
+
+    /* ] */ case -7:
+                if (!pop(&jc, MODE_ARRAY)) {
+                    goto REJECT;
+                }
+                if (pretty) {
+                    // AR means we just pushed the [, so this is an empty array.
+                    // Rewind the previous indent, which was two bigger (before pop)
+                    if (jc.state == AR) {
+                        curr -= 3 + 2 * (jc.top - jc.stack);
+                    } else {
+                        // Indent for our current line
+                        curr = indent(&jc, curr);
+                    }
+                }
+                *curr = next;
+                curr++;
+                jc.state = OK;
+                break;
+
+    /* { */ case -6:
+                if (!push(&jc, MODE_KEY)) {
+                    goto REJECT;
+                }
+                jc.state = OB;
+                *curr = next;
+                curr++;
+                if (pretty) {
+                    curr = indent(&jc, curr);
+                }
+                break;
+
+    /* [ */ case -5:
+                if (!push(&jc, MODE_ARRAY)) {
+                    goto REJECT;
+                }
+                jc.state = AR;
+                *curr = next;
+                curr++;
+                if (pretty) {
+                    curr = indent(&jc, curr);
+                }
+                break;
+
+    /* " */ case -4:
+                switch (*jc.top) {
+                case MODE_KEY:
+                    jc.state = CO;
+                    break;
+                case MODE_ARRAY:
+                case MODE_OBJECT:
+                    jc.state = OK;
+                    break;
+                default:
+                    goto REJECT;
+                }
+                *curr = next;
+                curr++;
+                break;
+
+    /* , */ case -3:
+                switch (*jc.top) {
+                case MODE_OBJECT:
+                    /* A comma causes a flip from object mode to key mode. */
+                    if (*jc.top != MODE_OBJECT) {
+                        goto REJECT;
+                    }
+                    *jc.top = MODE_KEY;
+                    jc.state = KE;
+                    break;
+                case MODE_ARRAY:
+                    jc.state = VA;
+                    break;
+                default:
+                    goto REJECT;
+                }
+                if (pretty) {
+                    *curr = next;
+                    curr++;
+                    curr = indent(&jc, curr);
+                } else {
+                    memcpy(curr, ", ", 2);
+                    curr += 2;
+                }
+                break;
+
+    /* : */ case -2:
+                /* A colon causes a flip from key mode to object mode. */
+                if (*jc.top != MODE_KEY) {
+                    goto REJECT;
+                }
+                *jc.top = MODE_OBJECT;
+                jc.state = VA;
+                memcpy(curr, ": ", 2);
+                curr += 2;
                 break;
             default:
-                return reject(jc);
+                /* Bad action. */
+                goto REJECT;
             }
-            break;
-
-/* : */ case -2:
-/*
-    A colon causes a flip from key mode to object mode.
-*/
-            if (!pop(jc, MODE_KEY) || !push(jc, MODE_OBJECT)) {
-                return reject(jc);
-            }
-            jc->state = VA;
-            break;
-/*
-    Bad action.
-*/
-        default:
-            return reject(jc);
         }
     }
-    return TRUE;
+    out->size = curr - out->data;
+    return out;
+REJECT:
+    reject(&jc, buf, pos, out);
+    return out;
 }
 
 
@@ -412,10 +483,6 @@ JSON_checker_done(JSON_checker jc)
     TRUE. This function deletes the JSON_checker and returns TRUE if the JSON
     text was accepted.
 */
-    if (jc->valid != GOOD) {
-        return FALSE;
-    }
     int result = jc->state == OK && pop(jc, MODE_DONE);
-    destroy(jc);
     return result;
 }
